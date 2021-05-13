@@ -200,7 +200,9 @@ open class NWSTokenView: UIView, UIScrollViewDelegate, UITextViewDelegate
         // Check if text view should become first responder (i.e. new token added)
         if self.shouldBecomeFirstResponder
         {
-            self.textView.becomeFirstResponder()
+            if !UIAccessibility.isVoiceOverRunning {
+                self.textView.becomeFirstResponder()
+            }
             self.shouldBecomeFirstResponder = false
         }
         
@@ -213,6 +215,8 @@ open class NWSTokenView: UIView, UIScrollViewDelegate, UITextViewDelegate
         // Notify delegate of finished loading
         self.delegate?.tokenView(self, didFinishLoadingTokens: self.tokens.count)
         
+        self.scrollView.accessibilityElements = self.tokens + [self.textView]
+            
         UIView.setAnimationsEnabled(true) // Re-enable animations
     }
     
@@ -262,8 +266,13 @@ open class NWSTokenView: UIView, UIScrollViewDelegate, UITextViewDelegate
         {
             if let placeholderText = self.dataSource?.titleForTokenViewPlaceholder(self)
             {
-                self.textView.text = placeholderText
-                self.textView.textColor = self.dataSource?.textColorForTokenViewPlaceholder(self) ?? UIColor.lightGray
+                if UIAccessibility.isVoiceOverRunning, self.tokens.isEmpty {
+                    self.textView.textColor = self.dataSource?.textColorForTokenViewTextView(self) ?? UIColor.black
+                    self.textView.text = ""
+                } else {
+                    self.textView.text = placeholderText
+                    self.textView.textColor = self.dataSource?.textColorForTokenViewPlaceholder(self) ?? UIColor.lightGray
+                }
             }
         }
         else
@@ -341,9 +350,9 @@ open class NWSTokenView: UIView, UIScrollViewDelegate, UITextViewDelegate
     /// - parameter index: Int value for token index.
     ///
     /// - returns: NWSToken
-    open func tokenForIndex(_ index: Int) -> NWSToken
+    open func tokenForIndex(_ index: Int) -> NWSToken?
     {
-        return self.tokens[index]
+        return UIAccessibility.isVoiceOverRunning ? self.tokens.last : self.tokens[index]
     }
     
     /// Selects the tapped token for interaction (i.e. removal).
@@ -372,7 +381,9 @@ open class NWSTokenView: UIView, UIScrollViewDelegate, UITextViewDelegate
         if token.isSelected
         {
             token.hiddenTextView.delegate = self
-            token.hiddenTextView.becomeFirstResponder()
+            if !UIAccessibility.isVoiceOverRunning {
+                token.hiddenTextView.becomeFirstResponder()
+            }
             self.selectedToken = token
             self.delegate?.tokenView(self, didSelectTokenAtIndex: token.tag)
         }
@@ -393,7 +404,9 @@ open class NWSTokenView: UIView, UIScrollViewDelegate, UITextViewDelegate
         {
             self.selectedToken?.isSelected = false
             self.selectedToken?.hiddenTextView.delegate = nil
-            self.selectedToken?.hiddenTextView.resignFirstResponder()
+            if !UIAccessibility.isVoiceOverRunning {
+                self.selectedToken?.hiddenTextView.resignFirstResponder()
+            }
             self.delegate?.tokenView(self, didDeselectTokenAtIndex: self.selectedToken!.tag)
             self.selectedToken = nil
         }
@@ -459,6 +472,11 @@ open class NWSTokenView: UIView, UIScrollViewDelegate, UITextViewDelegate
     
     open func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool
     {
+        if UIAccessibility.isVoiceOverRunning, let (index, _) = self.tokens.enumerated().first(where: { $0.element.isSelected }) {
+            self.delegate?.tokenView(self, didDeleteTokenAtIndex: index)
+            self.reloadData()
+            return false
+        }
         // Token Hidden TextView
         if textView.superview is NWSToken
         {
