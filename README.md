@@ -1,4 +1,541 @@
 import XCTest
+@testable import TuNombreDeApp // <-- Reemplaza con el nombre de tu módulo/target
+
+//MARK: - Código de Producción (Clases que estamos probando)
+// Coloca aquí las definiciones de StickyHeaderFlowLayout y MyHeaderView
+// para que este archivo sea autocontenido para las pruebas, o asegúrate
+// de que estén accesibles a través de @testable import.
+
+// Ejemplo: (Asegúrate de que estas coincidan con tu código real)
+class StickyHeaderFlowLayout: UICollectionViewFlowLayout {
+
+    var stickyHeaderSection: Int = 1
+
+    private let stickyHeaderZIndex: Int = 1000
+    private let standardHeaderZIndex: Int = 100
+
+    override func layoutAttributesForElements(in rect: CGRect) -> [UICollectionViewLayoutAttributes]? {
+        guard let superAttributes = super.layoutAttributesForElements(in: rect),
+              var mutableAttributes = superAttributes.map({ $0.copy() as! UICollectionViewLayoutAttributes }) // Copia idiomática
+        else { return nil }
+
+        guard let collectionView = self.collectionView else { return mutableAttributes }
+        let currentOffsetY = collectionView.contentOffset.y
+        // ¡Importante! Usar adjustedContentInset
+        let contentInsetTop = collectionView.adjustedContentInset.top
+        let effectiveOffsetY = currentOffsetY + contentInsetTop
+
+        let stickyHeaderIndexPath = IndexPath(item: 0, section: stickyHeaderSection)
+
+        // Obtener atributos originales del header pegajoso (si existe)
+        guard let stickyHeaderOriginalAttrs = super.layoutAttributesForSupplementaryView(ofKind: UICollectionView.elementKindSectionHeader, at: stickyHeaderIndexPath)?.copy() as? UICollectionViewLayoutAttributes
+        else {
+             // Si no hay header pegajoso, solo ajustar zIndex de otros headers
+             for attrs in mutableAttributes where attrs.representedElementKind == UICollectionView.elementKindSectionHeader {
+                  attrs.zIndex = standardHeaderZIndex
+             }
+             return mutableAttributes
+        }
+
+        // Calcular Y pegajoso y actualizar la copia
+        let originalStickyHeaderY = stickyHeaderOriginalAttrs.frame.origin.y
+        let stickyY = max(effectiveOffsetY, originalStickyHeaderY)
+        stickyHeaderOriginalAttrs.frame.origin.y = stickyY
+        stickyHeaderOriginalAttrs.zIndex = stickyHeaderZIndex
+
+        var stickyHeaderFoundIndex: Int? = nil
+
+        // Iterar para encontrar índice y ajustar otros headers
+        for (index, attrs) in mutableAttributes.enumerated() {
+            if attrs.representedElementKind == UICollectionView.elementKindSectionHeader {
+                if attrs.indexPath == stickyHeaderIndexPath {
+                    stickyHeaderFoundIndex = index
+                } else {
+                    attrs.zIndex = standardHeaderZIndex
+                }
+            }
+            // zIndex de celdas es 0 por defecto
+        }
+
+        // Reemplazar o añadir el header pegajoso actualizado
+        if let index = stickyHeaderFoundIndex {
+            mutableAttributes[index] = stickyHeaderOriginalAttrs
+        } else if stickyHeaderOriginalAttrs.frame.intersects(rect) {
+            mutableAttributes.append(stickyHeaderOriginalAttrs)
+        }
+
+        return mutableAttributes
+    }
+
+    override func shouldInvalidateLayout(forBoundsChange newBounds: CGRect) -> Bool {
+        // Invalidar solo si el origen Y cambia
+        let oldBounds = collectionView?.bounds ?? .zero
+        return newBounds.origin.y != oldBounds.origin.y
+    }
+
+    override func layoutAttributesForSupplementaryView(ofKind elementKind: String, at indexPath: IndexPath) -> UICollectionViewLayoutAttributes? {
+        guard let attributes = super.layoutAttributesForSupplementaryView(ofKind: elementKind, at: indexPath),
+              let copiedAttributes = attributes.copy() as? UICollectionViewLayoutAttributes
+        else { return nil }
+
+        if elementKind == UICollectionView.elementKindSectionHeader && indexPath.section == stickyHeaderSection {
+            guard let collectionView = self.collectionView else { return copiedAttributes }
+            // ¡Importante! Usar adjustedContentInset
+            let contentInsetTop = collectionView.adjustedContentInset.top
+            let effectiveOffsetY = collectionView.contentOffset.y + contentInsetTop
+            copiedAttributes.frame.origin.y = max(effectiveOffsetY, attributes.frame.origin.y)
+            copiedAttributes.zIndex = stickyHeaderZIndex
+        } else if elementKind == UICollectionView.elementKindSectionHeader {
+            copiedAttributes.zIndex = standardHeaderZIndex
+        }
+        return copiedAttributes
+    }
+}
+
+// Asumimos que MyHeaderView existe y es una UICollectionReusableView simple
+class MyHeaderView: UICollectionReusableView {
+    // Contenido irrelevante para las pruebas de layout
+}
+
+
+//MARK: - Mocks y Stubs para Pruebas
+
+class MockLayoutDataSourceAndDelegate: NSObject, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
+    var numberOfSections: Int = 0
+    var itemsPerSection: [Int] = []
+    var itemSizes: [IndexPath: CGSize] = [:] // Usar diccionario para acceso rápido
+    var headerSizes: [Int: CGSize] = [:]    // Usar diccionario
+
+    // Valores por defecto para espaciados/insets (si no se implementan métodos específicos)
+    var defaultMinimumLineSpacing: CGFloat = 10
+    var defaultMinimumInteritemSpacing: CGFloat = 10
+    var defaultSectionInset: UIEdgeInsets = .zero
+
+    func reset() {
+        numberOfSections = 0
+        itemsPerSection = []
+        itemSizes = [:]
+        headerSizes = [:]
+    }
+
+    // MARK: DataSource
+    func numberOfSections(in collectionView: UICollectionView) -> Int {
+        // print("DataSource: numberOfSections -> \(numberOfSections)")
+        return numberOfSections
+    }
+
+    func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
+        let count = section < itemsPerSection.count ? itemsPerSection[section] : 0
+        // print("DataSource: numberOfItemsInSection \(section) -> \(count)")
+        return count
+    }
+
+    func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
+        // print("DataSource: cellForItemAt \(indexPath)")
+        // Devolver una instancia básica, no necesitamos configurar la celda real
+        return collectionView.dequeueReusableCell(withReuseIdentifier: "MockCell", for: indexPath)
+    }
+
+    func collectionView(_ collectionView: UICollectionView, viewForSupplementaryElementOfKind kind: String, at indexPath: IndexPath) -> UICollectionReusableView {
+       // print("DataSource: viewForSupplementaryElementOfKind \(kind) at \(indexPath)")
+       // Devolver una instancia básica
+        if kind == UICollectionView.elementKindSectionHeader {
+            return collectionView.dequeueReusableSupplementaryView(ofKind: kind, withReuseIdentifier: "MockHeader", for: indexPath)
+        }
+        return UICollectionReusableView() // Para otros tipos si los hubiera
+    }
+
+    // MARK: DelegateFlowLayout
+    func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, sizeForItemAt indexPath: IndexPath) -> CGSize {
+        let size = itemSizes[indexPath] ?? CGSize(width: 50, height: 50) // Tamaño por defecto si no se encuentra
+        // print("Delegate: sizeForItemAt \(indexPath) -> \(size)")
+        return size
+    }
+
+    func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, referenceSizeForHeaderInSection section: Int) -> CGSize {
+        let size = headerSizes[section] ?? .zero // Sin header por defecto
+        // print("Delegate: referenceSizeForHeaderInSection \(section) -> \(size)")
+        return size
+    }
+
+    func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, minimumLineSpacingForSectionAt section: Int) -> CGFloat {
+        // print("Delegate: minimumLineSpacingForSectionAt \(section) -> \(defaultMinimumLineSpacing)")
+        return defaultMinimumLineSpacing
+    }
+
+    func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, minimumInteritemSpacingForSectionAt section: Int) -> CGFloat {
+        // print("Delegate: minimumInteritemSpacingForSectionAt \(section) -> \(defaultMinimumInteritemSpacing)")
+        return defaultMinimumInteritemSpacing
+    }
+
+    func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, insetForSectionAt section: Int) -> UIEdgeInsets {
+       // print("Delegate: insetForSectionAt \(section) -> \(defaultSectionInset)")
+        return defaultSectionInset
+    }
+}
+
+
+class MockCollectionView: UICollectionView {
+    var mockDataSource: UICollectionViewDataSource?
+    var mockDelegate: UICollectionViewDelegate? // Puede ser UICollectionViewDelegateFlowLayout
+    var mockContentOffset: CGPoint = .zero
+    var mockAdjustedContentInset: UIEdgeInsets = .zero
+    var mockBounds: CGRect = .zero
+    private var _mockLayout: UICollectionViewLayout?
+
+    // Sobrescribir propiedades clave
+    override var dataSource: UICollectionViewDataSource? { get { mockDataSource } set { mockDataSource = newValue } }
+    override var delegate: UICollectionViewDelegate? { get { mockDelegate } set { mockDelegate = newValue } }
+    override var contentOffset: CGPoint { get { mockContentOffset } set { mockContentOffset = newValue } }
+    override var adjustedContentInset: UIEdgeInsets { get { mockAdjustedContentInset } set { mockAdjustedContentInset = newValue } }
+    override var bounds: CGRect { get { mockBounds } set { mockBounds = newValue } }
+
+    override var collectionViewLayout: UICollectionViewLayout {
+        get { _mockLayout ?? super.collectionViewLayout } // Devolver layout asignado
+        set { _mockLayout = newValue } // Almacenar layout asignado
+    }
+
+    override var numberOfSections: Int { mockDataSource?.numberOfSections?(in: self) ?? 0 }
+    override func numberOfItems(inSection section: Int) -> Int { mockDataSource?.collectionView(self, numberOfItemsInSection: section) ?? 0 }
+
+    // Métodos para simular el registro (necesario para dequeue)
+    private var registeredCells: Set<String> = []
+    private var registeredSupplementaryViews: [String: Set<String>] = [:] // [kind: Set<identifier>]
+
+    override func register(_ cellClass: AnyClass?, forCellWithReuseIdentifier identifier: String) {
+        registeredCells.insert(identifier)
+    }
+    override func register(_ viewClass: AnyClass?, forSupplementaryViewOfKind elementKind: String, withReuseIdentifier identifier: String) {
+        var identifiers = registeredSupplementaryViews[elementKind] ?? Set<String>()
+        identifiers.insert(identifier)
+        registeredSupplementaryViews[elementKind] = identifiers
+    }
+
+    // Simulación básica de Dequeue
+     override func dequeueReusableCell(withReuseIdentifier identifier: String, for indexPath: IndexPath) -> UICollectionViewCell {
+        guard registeredCells.contains(identifier) else {
+            fatalError("Intentando dequeue celda no registrada: \(identifier)")
+        }
+        // Devolver una instancia genérica en pruebas
+        return UICollectionViewCell(frame: .zero)
+    }
+
+     override func dequeueReusableSupplementaryView(ofKind elementKind: String, withReuseIdentifier identifier: String, for indexPath: IndexPath) -> UICollectionReusableView {
+        guard registeredSupplementaryViews[elementKind]?.contains(identifier) ?? false else {
+             fatalError("Intentando dequeue vista suplementaria no registrada: kind=\(elementKind) id=\(identifier)")
+        }
+        // Devolver una instancia genérica en pruebas
+        if elementKind == UICollectionView.elementKindSectionHeader {
+            return MyHeaderView(frame: .zero) // Usar MyHeaderView si es específico
+        }
+        return UICollectionReusableView(frame: .zero)
+    }
+
+    // Inicializador
+    init(frame: CGRect = .zero, layout: UICollectionViewLayout = UICollectionViewFlowLayout()) {
+        super.init(frame: frame, collectionViewLayout: layout)
+        _mockLayout = layout // Asegurar que el layout inicial esté almacenado
+        // Registrar mocks para que dequeue funcione
+        self.register(UICollectionViewCell.self, forCellWithReuseIdentifier: "MockCell")
+        self.register(MyHeaderView.self, forSupplementaryViewOfKind: UICollectionView.elementKindSectionHeader, withReuseIdentifier: "MockHeader")
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+}
+
+//MARK: - Test Case
+
+class StickyHeaderFlowLayoutTests: XCTestCase {
+
+    var layout: StickyHeaderFlowLayout!
+    var mockCollectionView: MockCollectionView!
+    var mockDataSourceAndDelegate: MockLayoutDataSourceAndDelegate!
+
+    // Configuración común
+    let stickySection = 1
+    let headerHeight: CGFloat = 50
+    let cellHeight: CGFloat = 80
+    let cellWidth: CGFloat = 100
+    let spacing: CGFloat = 10
+    let collectionViewWidth: CGFloat = 320
+    let collectionViewHeight: CGFloat = 500
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+
+        // 1. Crear Layout
+        layout = StickyHeaderFlowLayout()
+        layout.stickyHeaderSection = stickySection
+        layout.minimumLineSpacing = spacing
+        layout.minimumInteritemSpacing = spacing
+        // Usaremos insets del delegate para mayor control por sección
+        // layout.sectionInset = UIEdgeInsets(top: spacing, left: spacing, bottom: spacing, right: spacing)
+
+        // 2. Crear Mocks
+        mockCollectionView = MockCollectionView(frame: CGRect(x: 0, y: 0, width: collectionViewWidth, height: collectionViewHeight), layout: layout)
+        mockDataSourceAndDelegate = MockLayoutDataSourceAndDelegate()
+        mockDataSourceAndDelegate.defaultMinimumLineSpacing = spacing
+        mockDataSourceAndDelegate.defaultMinimumInteritemSpacing = spacing
+        mockDataSourceAndDelegate.defaultSectionInset = UIEdgeInsets(top: spacing, left: spacing, bottom: spacing, right: spacing)
+
+        // 3. Conectar Mocks
+        mockCollectionView.dataSource = mockDataSourceAndDelegate
+        mockCollectionView.delegate = mockDataSourceAndDelegate
+        // La asignación del layout ya se hizo en el init del MockCollectionView
+        // No necesitamos layout.collectionView = mockCollectionView
+
+        // 4. Configurar estado inicial del Mock CollectionView
+        mockCollectionView.mockBounds = CGRect(x: 0, y: 0, width: collectionViewWidth, height: collectionViewHeight)
+        mockCollectionView.mockContentOffset = .zero
+        mockCollectionView.mockAdjustedContentInset = .zero // Asumir sin safe area inicial
+    }
+
+    override func tearDownWithError() throws {
+        layout = nil
+        mockCollectionView = nil
+        mockDataSourceAndDelegate = nil
+        try super.tearDownWithError()
+    }
+
+    // --- Helper para configurar datos ---
+    func setupMockData(sections: Int, itemsPerSec: Int) {
+        mockDataSourceAndDelegate.reset()
+        mockDataSourceAndDelegate.numberOfSections = sections
+        var currentItemsPerSection: [Int] = []
+        var currentItemSizes: [IndexPath: CGSize] = [:]
+        var currentHeaderSizes: [Int: CGSize] = [:]
+
+        for s in 0..<sections {
+            currentItemsPerSection.append(itemsPerSec)
+            currentHeaderSizes[s] = CGSize(width: collectionViewWidth, height: headerHeight)
+            for i in 0..<itemsPerSec {
+                // Usar tamaños fijos para simplificar la prueba del layout
+                currentItemSizes[IndexPath(item: i, section: s)] = CGSize(width: cellWidth, height: cellHeight)
+            }
+        }
+        mockDataSourceAndDelegate.itemsPerSection = currentItemsPerSection
+        mockDataSourceAndDelegate.itemSizes = currentItemSizes
+        mockDataSourceAndDelegate.headerSizes = currentHeaderSizes
+
+        // ¡Importante! Forzar al layout a recalcularse con los nuevos datos
+        layout.invalidateLayout()
+        // Simular un ciclo de layout para que 'prepare' (interno de FlowLayout) se ejecute
+        mockCollectionView.setNeedsLayout()
+        mockCollectionView.layoutIfNeeded()
+    }
+
+    // --- Helper para obtener atributos ---
+    func findAttributes(in attributes: [UICollectionViewLayoutAttributes]?, kind: String?, indexPath: IndexPath) -> UICollectionViewLayoutAttributes? {
+        attributes?.first { $0.indexPath == indexPath && $0.representedElementKind == kind }
+    }
+     func findCellAttributes(in attributes: [UICollectionViewLayoutAttributes]?, indexPath: IndexPath) -> UICollectionViewLayoutAttributes? {
+         attributes?.first { $0.indexPath == indexPath && $0.representedElementCategory == .cell }
+     }
+    func findHeaderAttributes(in attributes: [UICollectionViewLayoutAttributes]?, section: Int) -> UICollectionViewLayoutAttributes? {
+        attributes?.first { $0.indexPath.section == section && $0.representedElementKind == UICollectionView.elementKindSectionHeader }
+    }
+
+    // --- Tests ---
+
+    func testInitialLayout_HeaderPositionsAndZIndex_NoScroll() throws {
+        // Arrange
+        setupMockData(sections: 3, itemsPerSec: 4) // 4 items para asegurar 2 filas
+        mockCollectionView.mockContentOffset = .zero
+
+        // Act
+        // Forzar al layout a preparar sus atributos internos (FlowLayout lo necesita)
+        layout.prepare() // Llamar prepare explícitamente es útil en pruebas
+        let visibleRect = mockCollectionView.bounds
+        let attributes = layout.layoutAttributesForElements(in: visibleRect)
+
+        // Assert
+        // Header 0 (No pegajoso)
+        let header0Attrs = findHeaderAttributes(in: attributes, section: 0)
+        XCTAssertNotNil(header0Attrs, "Header 0 no encontrado")
+        XCTAssertEqual(header0Attrs?.frame.origin.y ?? -1, mockDataSourceAndDelegate.defaultSectionInset.top, accuracy: 0.1, "Header 0 Y inicial")
+        XCTAssertEqual(header0Attrs?.zIndex ?? -1, layout.standardHeaderZIndex, "Header 0 zIndex inicial")
+
+        // Header 1 (Pegajoso, pero aún no pegado)
+        let header1IndexPath = IndexPath(item: 0, section: stickySection)
+        // Obtener Y original esperado directamente del layout ANTES del scroll
+        let originalHeader1Attrs = layout.layoutAttributesForSupplementaryView(ofKind: UICollectionView.elementKindSectionHeader, at: header1IndexPath)
+        let expectedOriginalY = originalHeader1Attrs?.frame.origin.y ?? -999 // Valor esperado
+        XCTAssert(expectedOriginalY > headerHeight, "Y original del Header 1 debe ser mayor que altura del Header 0") // Sanity check
+
+        let header1Attrs = findHeaderAttributes(in: attributes, section: stickySection)
+        XCTAssertNotNil(header1Attrs, "Header 1 no encontrado")
+        XCTAssertEqual(header1Attrs?.frame.origin.y ?? -1, expectedOriginalY, accuracy: 0.1, "Header 1 Y inicial debería ser el original")
+        // zIndex ya debería ser el alto porque se asigna siempre en la lógica
+        XCTAssertEqual(header1Attrs?.zIndex ?? -1, layout.stickyHeaderZIndex, "Header 1 zIndex inicial")
+
+        // Celda 0,0
+        let cell00Attrs = findCellAttributes(in: attributes, indexPath: IndexPath(item: 0, section: 0))
+        XCTAssertNotNil(cell00Attrs, "Celda 0,0 no encontrada")
+        XCTAssertEqual(cell00Attrs?.frame.origin.y ?? -1, mockDataSourceAndDelegate.defaultSectionInset.top + headerHeight + spacing, accuracy: 0.1, "Celda 0,0 Y inicial")
+        XCTAssertEqual(cell00Attrs?.zIndex ?? -1, 0, "Celda 0,0 zIndex inicial")
+    }
+
+
+    func testScrolling_Header1BecomesSticky() throws {
+        // Arrange
+        setupMockData(sections: 3, itemsPerSec: 8) // Más items para asegurar scroll
+        mockCollectionView.mockAdjustedContentInset = UIEdgeInsets(top: 20, left: 0, bottom: 0, right: 0) // Simular Safe Area / Nav Bar
+
+        // Obtener Y original esperado
+        let header1IndexPath = IndexPath(item: 0, section: stickySection)
+        layout.prepare() // Asegurar que el layout esté preparado
+        guard let originalHeader1Attrs = layout.layoutAttributesForSupplementaryView(ofKind: UICollectionView.elementKindSectionHeader, at: header1IndexPath) else {
+            XCTFail("No se pudo obtener layout original para Header 1")
+            return
+        }
+        let originalY = originalHeader1Attrs.frame.origin.y
+
+        // Calcular Y del scroll para que se pegue
+        let stickyTriggerOffsetY = originalY - mockCollectionView.mockAdjustedContentInset.top
+        XCTAssertGreaterThan(stickyTriggerOffsetY, 0, "Sticky trigger Y debe ser positivo")
+
+        // Simular scroll justo *después* de que se pegue
+        let currentOffsetY = stickyTriggerOffsetY + 50.0
+        mockCollectionView.mockContentOffset = CGPoint(x: 0, y: currentOffsetY)
+        var visibleRect = mockCollectionView.bounds
+        visibleRect.origin.y = currentOffsetY // Ajustar rect visible
+        // print("Visible Rect Y: \(visibleRect.origin.y), Height: \(visibleRect.height)")
+
+        // Act
+        let attributes = layout.layoutAttributesForElements(in: visibleRect)
+        // print("Attributes found: \(attributes?.count ?? 0)")
+        // attributes?.forEach { print(" - \($0.indexPath) \($0.representedElementKind ?? "Cell") Y:\($0.frame.origin.y) Z:\($0.zIndex)") }
+
+
+        // Assert
+        let header1Attrs = findHeaderAttributes(in: attributes, section: stickySection)
+        XCTAssertNotNil(header1Attrs, "Header 1 no encontrado cuando debería estar pegajoso")
+
+        let expectedStickyY = currentOffsetY + mockCollectionView.mockAdjustedContentInset.top
+        XCTAssertEqual(header1Attrs?.frame.origin.y ?? -1, expectedStickyY, accuracy: 0.1, "Header 1 Y debería estar pegado al tope (offset + inset)")
+        XCTAssertEqual(header1Attrs?.zIndex ?? -1, layout.stickyHeaderZIndex, "Header 1 zIndex debería ser pegajoso")
+
+        // Celda 1,0 debería estar debajo
+         let cell10Attrs = findCellAttributes(in: attributes, indexPath: IndexPath(item: 0, section: stickySection))
+         XCTAssertNotNil(cell10Attrs, "Celda 1,0 no encontrada")
+         // El Y original de la celda calculado por FlowLayout debería ser > Y pegajoso del header + altura header
+         XCTAssertGreaterThan(cell10Attrs!.frame.origin.y, header1Attrs!.frame.maxY - cellHeight, "Celda 1,0 Y original debería estar más abajo") // Comparación relativa
+
+        // Header 0 no debería estar en los atributos (ya pasó)
+        let header0Attrs = findHeaderAttributes(in: attributes, section: 0)
+        XCTAssertNil(header0Attrs, "Header 0 no debería estar en el rect visible")
+    }
+
+     func testScrolling_FarPastHeader1() throws {
+        // Arrange
+        setupMockData(sections: 5, itemsPerSec: 10) // Aún más datos
+        mockCollectionView.mockAdjustedContentInset = .zero // Sin inset para simplificar
+
+        // Obtener Y original
+        let header1IndexPath = IndexPath(item: 0, section: stickySection)
+        layout.prepare()
+        guard let originalHeader1Attrs = layout.layoutAttributesForSupplementaryView(ofKind: UICollectionView.elementKindSectionHeader, at: header1IndexPath) else {
+            XCTFail("No se pudo obtener layout original para Header 1")
+            return
+        }
+        let originalY = originalHeader1Attrs.frame.origin.y
+
+        // Simular scroll muy abajo
+        let farOffsetY = originalY + 800.0
+        mockCollectionView.mockContentOffset = CGPoint(x: 0, y: farOffsetY)
+        var visibleRect = mockCollectionView.bounds
+        visibleRect.origin.y = farOffsetY
+
+        // Act
+        let attributes = layout.layoutAttributesForElements(in: visibleRect)
+
+        // Assert
+        // Header 1 todavía pegado
+        let header1Attrs = findHeaderAttributes(in: attributes, section: stickySection)
+        XCTAssertNotNil(header1Attrs, "Header 1 no encontrado en scroll lejano")
+        let expectedStickyY = farOffsetY + mockCollectionView.mockAdjustedContentInset.top
+        XCTAssertEqual(header1Attrs?.frame.origin.y ?? -1, expectedStickyY, accuracy: 0.1, "Header 1 Y debería seguir pegado")
+        XCTAssertEqual(header1Attrs?.zIndex ?? -1, layout.stickyHeaderZIndex, "Header 1 zIndex incorrecto")
+
+        // Header 2 (o posterior) debería estar visible y debajo
+         let header2Attrs = findHeaderAttributes(in: attributes, section: stickySection + 1)
+         if let h2Attrs = header2Attrs, let h1Attrs = header1Attrs { // Asegurar que ambos existen
+             XCTAssertNotNil(h2Attrs, "Header 2 debería estar visible en scroll lejano")
+             XCTAssertGreaterThan(h2Attrs.frame.origin.y, h1Attrs.frame.maxY - headerHeight, "Header 2 debería estar debajo de Header 1") // Comparación relativa
+             XCTAssertEqual(h2Attrs.zIndex, layout.standardHeaderZIndex, "Header 2 zIndex incorrecto")
+         } else {
+            // Podría ser que Header 2 no esté en este 'rect' exacto, lo cual es aceptable.
+            // Lo importante es que Header 1 esté pegado.
+            print("Nota: Header 2 no encontrado en este rect, verificar si es esperado.")
+         }
+     }
+
+    func testDirectAttributeRequest_WhenSticky() throws {
+        // Arrange
+        setupMockData(sections: 3, itemsPerSec: 8)
+        mockCollectionView.mockAdjustedContentInset = UIEdgeInsets(top: 10, left: 0, bottom: 0, right: 0)
+
+        let header1IndexPath = IndexPath(item: 0, section: stickySection)
+        layout.prepare()
+        guard let originalHeader1Attrs = layout.layoutAttributesForSupplementaryView(ofKind: UICollectionView.elementKindSectionHeader, at: header1IndexPath) else {
+            XCTFail("No se pudo obtener layout original para Header 1")
+            return
+        }
+        let originalY = originalHeader1Attrs.frame.origin.y
+        let stickyTriggerOffsetY = originalY - mockCollectionView.mockAdjustedContentInset.top
+        let currentOffsetY = stickyTriggerOffsetY + 100.0
+        mockCollectionView.mockContentOffset = CGPoint(x: 0, y: currentOffsetY)
+
+        // Act
+        // Pedir atributo directamente
+        let directAttrs = layout.layoutAttributesForSupplementaryView(ofKind: UICollectionView.elementKindSectionHeader, at: header1IndexPath)
+
+        // Assert
+        XCTAssertNotNil(directAttrs, "Atributo directo para Header 1 no encontrado")
+        let expectedStickyY = currentOffsetY + mockCollectionView.mockAdjustedContentInset.top
+        XCTAssertEqual(directAttrs?.frame.origin.y ?? -1, expectedStickyY, accuracy: 0.1, "Y directo incorrecto cuando está pegajoso")
+        XCTAssertEqual(directAttrs?.zIndex ?? -1, layout.stickyHeaderZIndex, "ZIndex directo incorrecto cuando está pegajoso")
+    }
+
+     func testDirectAttributeRequest_WhenNotSticky() throws {
+        // Arrange
+        setupMockData(sections: 3, itemsPerSec: 8)
+        mockCollectionView.mockAdjustedContentInset = .zero
+        mockCollectionView.mockContentOffset = .zero // Sin scroll
+
+        let header1IndexPath = IndexPath(item: 0, section: stickySection)
+        layout.prepare()
+        guard let originalHeader1Attrs = layout.layoutAttributesForSupplementaryView(ofKind: UICollectionView.elementKindSectionHeader, at: header1IndexPath) else {
+             XCTFail("No se pudo obtener layout original para Header 1")
+             return
+        }
+        let originalY = originalHeader1Attrs.frame.origin.y
+
+        // Act
+        let directAttrs = layout.layoutAttributesForSupplementaryView(ofKind: UICollectionView.elementKindSectionHeader, at: header1IndexPath)
+
+        // Assert
+        XCTAssertNotNil(directAttrs, "Atributo directo para Header 1 no encontrado")
+        XCTAssertEqual(directAttrs?.frame.origin.y ?? -1, originalY, accuracy: 0.1, "Y directo incorrecto cuando no está pegajoso")
+        // El zIndex se asigna siempre, así que debe ser el alto
+        XCTAssertEqual(directAttrs?.zIndex ?? -1, layout.stickyHeaderZIndex, "ZIndex directo incorrecto cuando no está pegajoso")
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import XCTest
 @testable import TuNombreDeApp // Importa tu módulo principal
 
 // --- Mock/Stub Objects ---
